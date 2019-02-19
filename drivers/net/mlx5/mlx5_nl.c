@@ -65,6 +65,12 @@
 #endif
 
 /* These are normally found in linux/if_link.h. */
+#ifndef HAVE_IFLA_NUM_VF
+#define IFLA_NUM_VF 21
+#endif
+#ifndef HAVE_IFLA_EXT_MASK
+#define IFLA_EXT_MASK 29
+#endif
 #ifndef HAVE_IFLA_PHYS_SWITCH_ID
 #define IFLA_PHYS_SWITCH_ID 36
 #endif
@@ -836,6 +842,7 @@ mlx5_nl_switch_info_cb(struct nlmsghdr *nh, void *arg)
 	size_t off = NLMSG_LENGTH(sizeof(struct ifinfomsg));
 	bool port_name_set = false;
 	bool switch_id_set = false;
+	bool num_vf_set = false;
 
 	if (nh->nlmsg_type != RTM_NEWLINK)
 		goto error;
@@ -848,6 +855,9 @@ mlx5_nl_switch_info_cb(struct nlmsghdr *nh, void *arg)
 		if (ra->rta_len > nh->nlmsg_len - off)
 			goto error;
 		switch (ra->rta_type) {
+		case IFLA_NUM_VF:
+			num_vf_set = true;
+			break;
 		case IFLA_PHYS_PORT_NAME:
 			errno = 0;
 			info.port_name = strtol(payload, &end, 0);
@@ -867,8 +877,8 @@ mlx5_nl_switch_info_cb(struct nlmsghdr *nh, void *arg)
 		}
 		off += RTA_ALIGN(ra->rta_len);
 	}
-	info.master = switch_id_set && !port_name_set;
-	info.representor = switch_id_set && port_name_set;
+	info.master = switch_id_set && (!port_name_set || num_vf_set);
+	info.representor = switch_id_set && port_name_set && !num_vf_set;
 	memcpy(arg, &info, sizeof(info));
 	return 0;
 error:
@@ -896,9 +906,13 @@ mlx5_nl_switch_info(int nl, unsigned int ifindex, struct mlx5_switch_info *info)
 	struct {
 		struct nlmsghdr nh;
 		struct ifinfomsg info;
+		struct rtattr rta;
+		uint32_t extmask;
 	} req = {
 		.nh = {
-			.nlmsg_len = NLMSG_LENGTH(sizeof(req.info)),
+			.nlmsg_len = NLMSG_LENGTH
+					(sizeof(req.info) +
+					 RTA_LENGTH(sizeof(uint32_t))),
 			.nlmsg_type = RTM_GETLINK,
 			.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK,
 		},
@@ -906,6 +920,11 @@ mlx5_nl_switch_info(int nl, unsigned int ifindex, struct mlx5_switch_info *info)
 			.ifi_family = AF_UNSPEC,
 			.ifi_index = ifindex,
 		},
+		.rta = {
+			.rta_type = IFLA_EXT_MASK,
+			.rta_len = RTA_LENGTH(sizeof(int32_t)),
+		},
+		.extmask = RTE_LE32(1),
 	};
 	int ret;
 
