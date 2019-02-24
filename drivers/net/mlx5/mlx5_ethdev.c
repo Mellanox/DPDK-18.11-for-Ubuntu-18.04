@@ -1333,7 +1333,8 @@ mlx5_sysfs_switch_info(unsigned int ifindex, struct mlx5_switch_info *info)
 	bool port_name_set = false;
 	bool port_switch_id_set = false;
 	bool device_dir = false;
-	char c;
+	char c, pf_c1, pf_c2, vf_c1, vf_c2;
+	int32_t pf_num;
 
 	if (!if_indextoname(ifindex, ifname)) {
 		rte_errno = errno;
@@ -1349,9 +1350,20 @@ mlx5_sysfs_switch_info(unsigned int ifindex, struct mlx5_switch_info *info)
 
 	file = fopen(phys_port_name, "rb");
 	if (file != NULL) {
+		/* Check for port-name as a number (support kernel ver < 5.0 */
 		port_name_set =
 			fscanf(file, "%d%c", &data.port_name, &c) == 2 &&
 			c == '\n';
+		if (!port_name_set) {
+			/*
+			 * Check for port-name as a string of the form pf0vf0
+			 * (support kernel ver >= 5.0)
+			 */
+			port_name_set = (fscanf(file, "%c%c%d%c%c%d%c", &pf_c1,
+						&pf_c2, &pf_num, &vf_c1, &vf_c2,
+						&data.port_name, &c) == 7) &&
+					c == '\n';
+		}
 		fclose(file);
 	}
 	file = fopen(phys_switch_id, "rb");
